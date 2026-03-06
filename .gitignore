@@ -1,0 +1,41 @@
+# Environment & secrets
+.env
+
+# Input media files (can be large) — keep the folder, ignore contents
+input/*
+!input/.gitkeep
+
+# Generated output — keep the folder, ignore contents
+output/*
+!output/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+
+# Hugging Face model cache
+.cache/
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

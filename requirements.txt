@@ -1,0 +1,23 @@
+# Core audio diarization
+pyannote.audio==3.3.2
+torch>=2.0.0
+torchaudio>=2.0.0
+
+# Pin huggingface_hub below 1.0 — pyannote internally uses use_auth_token
+# which was removed in huggingface_hub v1.0
+huggingface_hub>=0.23.0,<1.0.0
+
+# Audio file handling
+pydub==0.25.1
+ffmpeg-python==0.2.0
+
+# Subtitle parsing
+srt==3.5.3
+webvtt-py==0.4.6
+
+# Gemini AI
+google-generativeai==0.8.3
+
+# Env & utilities
+python-dotenv==1.0.1
+tqdm==4.66.4
