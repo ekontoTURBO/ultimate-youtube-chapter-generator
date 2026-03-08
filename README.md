@@ -44,7 +44,7 @@ The output is a plain `.txt` file you can copy-paste directly into YouTube.
 | Requirement | Where to get it |
 |---|---|
 | Python 3.10+ | [python.org](https://python.org) |
-| NVIDIA GPU (recommended) | RTX 3090 or similar — CPU works but is slow |
+| GPU (recommended, see below) | Any supported GPU — CPU works but is slow |
 | Gemini API Key | [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey) |
 | Hugging Face Token | [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) |
 | Audio file | `.mp3` or `.wav` of the episode |
@@ -84,15 +84,48 @@ After each run, the following files are saved here:
 
 ---
 
+## GPU Support
+
+The diarization step is the only part that uses a GPU. The script auto-detects what's available and picks the best option — no configuration needed.
+
+| Hardware | Support | Speed (1h45m episode) |
+|---|---|---|
+| NVIDIA GPU (CUDA) | Full support | ~8–12 min |
+| Apple Silicon M1/M2/M3 | Full support via MPS | ~15–25 min |
+| AMD GPU on Linux (ROCm) | Works if PyTorch ROCm build is installed | ~15–30 min |
+| AMD GPU on Windows | Not supported by PyTorch | Falls back to CPU |
+| Intel Arc | Not supported | Falls back to CPU |
+| CPU only | Always works | ~45–90 min |
+
+**Diarization only runs once per episode** — it auto-saves to `output/` and every re-run skips it entirely. Slow hardware is only a problem on the very first run.
+
+---
+
 ## Setup
 
 ### 1. Install dependencies
 
+**NVIDIA GPU:**
 ```bash
-# GPU (NVIDIA — do this first)
 pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+pip install -r requirements.txt
+```
 
-# Everything else
+**Apple Silicon (M1/M2/M3):**
+```bash
+pip install torch torchaudio
+pip install -r requirements.txt
+```
+
+**AMD GPU on Linux (ROCm):**
+```bash
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/rocm6.1
+pip install -r requirements.txt
+```
+
+**CPU only (no GPU):**
+```bash
+pip install torch torchaudio
 pip install -r requirements.txt
 ```
 
@@ -146,25 +179,41 @@ python podcast_chapter_generator.py --audio input/episode.mp3 --subs input/episo
 ## Example Output
 
 ```
-00:00:00 Wstęp
-00:01:37 Gość i relacja ze sztuką
-00:08:03 Historia ludowa a historia zwykłych ludzi
-00:12:56 Czym jest przednówek
-00:18:48 Jak wyglądała przeciętna wieś
-00:26:31 Relacje między poddanymi a panami
-00:37:36 Mit a rzeczywistość pańszczyzny
-00:46:31 Opcje wyjścia z poddaństwa
+00:00 Wstęp
+01:37 Gość i relacja ze sztuką
+08:03 Historia ludowa a historia zwykłych ludzi
+12:56 Czym jest przednówek
+18:48 Jak wyglądała przeciętna wieś
+26:31 Relacje między poddanymi a panami
+37:36 Mit a rzeczywistość pańszczyzny
+46:31 Opcje wyjścia z poddaństwa
 01:05:51 Ludzkie historie
 01:20:58 Przemoc i dyscyplina
 01:31:46 Codzienność medyczna na wsi
 01:43:52 Zakończenie
 ```
 
+Timestamps use `MM:SS` format before the first hour, switching to `HH:MM:SS` once the episode passes 60 minutes — matching YouTube's own chapter display behavior.
+
+---
+
+## How Host Detection Works
+
+The script identifies the host automatically by counting diarization segments per speaker and picking the one with the most. The reasoning: in an interview podcast, the host speaks frequently in short bursts (questions, transitions, intros) while the guest gives fewer but longer answers.
+
+As a tiebreaker, if two speakers have the same count, it picks whoever spoke first.
+
+**This can get it wrong** in interview-format podcasts where a talkative guest racks up more segments than the host. If that happens:
+
+1. Check the terminal output after diarization — it lists every speaker ID with their segment count and first appearance time
+2. Open `output/*_master_timeline.txt` and look at the first few lines to confirm which speaker ID matches the host's voice
+3. Re-run with `--host SPEAKER_XX --skip-diarization ...` — takes only seconds
+
 ---
 
 ## Tips
 
-- **Diarization only needs to run once per episode.** It auto-saves to `output/`. Use `--skip-diarization` on every re-run to go straight to the Gemini step.
-- **Wrong host detected?** Check the terminal output after diarization — it lists all speaker IDs with segment counts. The host usually speaks first or has the most short segments (questions). Use `--host SPEAKER_XX` to correct it.
+- **Diarization only needs to run once per episode.** It auto-saves to `output/*_diarization.json` after every run. Use `--skip-diarization` on every re-run to jump straight to the Gemini step.
+- **Wrong host detected?** See "How Host Detection Works" above.
 - **YouTube auto-generated subtitles** downloaded as `.srt` work perfectly as input.
-- An RTX 3090 processes a 1h45m episode in roughly **8–12 minutes**. CPU takes 45–90 minutes for the same.
+- The GPU is only used during diarization. Once that's done and saved, all re-runs (changing the host, tweaking results) are CPU-only and complete in seconds regardless of your hardware.

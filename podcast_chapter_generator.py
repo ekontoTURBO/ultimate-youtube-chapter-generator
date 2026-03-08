@@ -19,6 +19,7 @@ from tqdm import tqdm
 
 # Suppress non-critical warnings
 warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", message=".*weights_only.*")
 
 load_dotenv(override=True)
 
@@ -36,13 +37,18 @@ OUTPUT_DIR = Path("output")
 # Utility helpers
 # ---------------------------------------------------------------------------
 
-def seconds_to_hhmmss(seconds: float) -> str:
-    """Convert float seconds → HH:MM:SS (no milliseconds, YouTube-compatible)."""
+def seconds_to_chapter_ts(seconds: float) -> str:
+    """Convert float seconds → YouTube chapter timestamp.
+    Under 1 hour: MM:SS  (e.g. 07:42)
+    1 hour or more: HH:MM:SS (e.g. 01:07:42)
+    """
     total = int(seconds)
     h = total // 3600
     m = (total % 3600) // 60
     s = total % 60
-    return f"{h:02d}:{m:02d}:{s:02d}"
+    if h > 0:
+        return f"{h:02d}:{m:02d}:{s:02d}"
+    return f"{m:02d}:{s:02d}"
 
 
 def seconds_to_timestamp(seconds: float) -> str:
@@ -124,8 +130,16 @@ def run_diarization(wav_path: Path, hf_token: str) -> list[dict]:
     # huggingface_hub reads HF_TOKEN from the environment automatically (set by load_dotenv)
     os.environ["HF_TOKEN"] = hf_token
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"[*] Using device: {device}" + (" (RTX 3090 detected)" if torch.cuda.is_available() else " (CPU fallback)"))
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+        device_label = f"CUDA — {torch.cuda.get_device_name(0)}"
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        device = torch.device("mps")
+        device_label = "Apple Silicon MPS"
+    else:
+        device = torch.device("cpu")
+        device_label = "CPU (no GPU available — this will be slow)"
+    print(f"[*] Using device: {device_label}")
 
     pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1")
     pipeline = pipeline.to(device)
@@ -149,7 +163,9 @@ def run_diarization(wav_path: Path, hf_token: str) -> list[dict]:
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
-    print("[+] Model unloaded, VRAM freed.")
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        torch.mps.empty_cache()
+    print("[+] Model unloaded, memory freed.")
 
     return segments
 
@@ -181,7 +197,7 @@ def identify_host(segments: list[dict], manual_override: str | None = None) -> s
     host = ranked[0]
     print(f"[+] Auto-detected host: {host} ({count[host]} segments)")
     for spk in ranked:
-        print(f"    {spk}: {count[spk]} segments, first at {seconds_to_hhmmss(first_seen[spk])}")
+        print(f"    {spk}: {count[spk]} segments, first at {seconds_to_chapter_ts(first_seen[spk])}")
     return host
 
 
@@ -306,7 +322,7 @@ def generate_chapters_with_gemini(
     api_key: str,
 ) -> str:
     """
-    Send the master timeline to gemini-3.1-pro-preview and request YouTube chapters.
+    Send the master timeline to gemini-3-flash-preview and request YouTube chapters.
     """
     print(f"[*] Sending timeline to Gemini ({GEMINI_MODEL}) ...")
     import google.generativeai as genai
@@ -318,15 +334,22 @@ def generate_chapters_with_gemini(
 
 PROWADZĄCA tego podcastu to: {host_id}
 
+WAŻNA ZASADA DOTYCZĄCA ZNACZNIKA ">>":
+W transkrypcie symbol ">>" na początku tekstu oznacza dokładny moment, w którym dany mówca zaczyna mówić (zmiana tury). Jest to marker z automatycznych napisów YouTube.
+Przykład:
+  [00:03:22.159] [SPEAKER_02]: ">> No właśnie to też o to chcecie"
+Ten znacznik czasu ([00:03:22.159]) to DOKŁADNY moment rozpoczęcia wypowiedzi prowadzącej.
+
 Twoje zadanie:
-1. Przeanalizuj transkrypt i zidentyfikuj główne zmiany tematyczne.
-2. Rozdział może zacząć się WYŁĄCZNIE wtedy, gdy Prowadząca ({host_id}) zaczyna nowy segment, zadaje pytanie przejściowe lub zmienia temat.
-3. Użyj DOKŁADNEGO znacznika czasu z linii transkryptu, w której Prowadząca zaczyna daną wypowiedź.
-4. Pomijaj drobne podtematy — skup się na wyraźnych, istotnych zmianach tematycznych.
+1. Przeanalizuj transkrypt i stwórz szczegółową listę rozdziałów — celuj w około 1 rozdział co 3–5 minut.
+2. Rozdział może zacząć się WYŁĄCZNIE na linii, gdzie Prowadząca ({host_id}) ma ">>" na początku tekstu — to znaczy że właśnie zaczęła mówić.
+3. Użyj DOKŁADNEGO znacznika czasu z tej linii z ">>" jako timestampu rozdziału.
+4. Uwzględniaj zarówno duże zmiany tematyczne, jak i wyraźne podtematy — bądź granularny.
 5. Pierwszy rozdział zawsze zaczyna się od 00:00:00.
-6. Nazwa rozdziału ma być jak najkrótsza, zwięzła, ale dokładnie informująca o czym jest dany rozdział. Pisz po polsku.
+6. Nazwa rozdziału ma być krótka i zwięzła (maksymalnie 5–7 słów), ale dokładnie informująca o czym jest dany fragment. Pisz po polsku.
 7. Zwróć WYŁĄCZNIE listę rozdziałów w dokładnie tym formacie (jeden na linię):
-   HH:MM:SS Nazwa rozdziału
+   - Przed pierwszą godziną: MM:SS Nazwa rozdziału  (np. 07:42 Tytuł)
+   - Od pierwszej godziny wzwyż: HH:MM:SS Nazwa rozdziału  (np. 01:07:42 Tytuł)
 
 Nie dodawaj żadnych wyjaśnień, wstępu ani dodatkowego tekstu. Tylko lista rozdziałów.
 
@@ -350,26 +373,26 @@ TRANSKRYPT:
 
 def parse_gemini_chapters(raw: str) -> list[tuple[str, str]]:
     """
-    Parse Gemini's chapter output into (HH:MM:SS, title) tuples.
-    Handles slight formatting variations.
+    Parse Gemini's chapter output into (formatted_timestamp, title) tuples.
+    Accepts MM:SS or HH:MM:SS from Gemini, outputs the correct YouTube format
+    (MM:SS under 1h, HH:MM:SS at 1h+).
     """
     chapters = []
     for line in raw.splitlines():
         line = line.strip()
         if not line:
             continue
-        # Match HH:MM:SS or MM:SS at start of line
         m = re.match(r"^(\d{1,2}:\d{2}(?::\d{2})?)\s+(.+)$", line)
         if m:
             ts = m.group(1)
             title = m.group(2).strip()
-            # Normalize to HH:MM:SS
             parts = ts.split(":")
             if len(parts) == 2:
-                ts = f"00:{parts[0].zfill(2)}:{parts[1].zfill(2)}"
+                total_seconds = int(parts[0]) * 60 + int(parts[1])
             else:
-                ts = f"{parts[0].zfill(2)}:{parts[1].zfill(2)}:{parts[2].zfill(2)}"
-            chapters.append((ts, title))
+                total_seconds = int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+            formatted = seconds_to_chapter_ts(total_seconds)
+            chapters.append((formatted, title))
     return chapters
 
 
