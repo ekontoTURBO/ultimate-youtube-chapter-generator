@@ -1,5 +1,7 @@
 # Podcast Chapter Generator
 
+An open source tool developed by [Cognitra](https://www.cognitra.pl/).
+
 Automatically generates YouTube-style chapters from a podcast episode — no manual timestamping needed.
 
 Drop in the audio file and the subtitle file, run one command, and get a ready-to-paste chapter list in seconds.
@@ -217,3 +219,9 @@ As a tiebreaker, if two speakers have the same count, it picks whoever spoke fir
 - **Wrong host detected?** See "How Host Detection Works" above.
 - **YouTube auto-generated subtitles** downloaded as `.srt` work perfectly as input.
 - The GPU is only used during diarization. Once that's done and saved, all re-runs (changing the host, tweaking results) are CPU-only and complete in seconds regardless of your hardware.
+
+---
+
+## About
+
+Developed and open sourced by [Cognitra](https://www.cognitra.pl/).
