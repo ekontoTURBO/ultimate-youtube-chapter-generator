@@ -330,30 +330,30 @@ def generate_chapters_with_gemini(
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel(GEMINI_MODEL)
 
-    prompt = f"""Jesteś ekspertem od edycji podcastów. Poniżej znajduje się pełny transkrypt podcastu z etykietami mówców i dokładnymi znacznikami czasu.
+    prompt = f"""You are an expert podcast editor. Below is a full podcast transcript with speaker labels and precise timestamps.
 
-PROWADZĄCA tego podcastu to: {host_id}
+THE HOST of this podcast is: {host_id}
 
-WAŻNA ZASADA DOTYCZĄCA ZNACZNIKA ">>":
-W transkrypcie symbol ">>" na początku tekstu oznacza dokładny moment, w którym dany mówca zaczyna mówić (zmiana tury). Jest to marker z automatycznych napisów YouTube.
-Przykład:
-  [00:03:22.159] [SPEAKER_02]: ">> No właśnie to też o to chcecie"
-Ten znacznik czasu ([00:03:22.159]) to DOKŁADNY moment rozpoczęcia wypowiedzi prowadzącej.
+IMPORTANT RULE — THE ">>" MARKER:
+In the transcript, the symbol ">>" at the start of a line's text marks the exact moment that speaker begins talking (a speaker turn change). This marker comes from YouTube's auto-generated captions.
+Example:
+  [00:03:22.159] [SPEAKER_02]: ">> So what I wanted to ask next is..."
+The timestamp [00:03:22.159] is the EXACT moment the host starts speaking.
 
-Twoje zadanie:
-1. Przeanalizuj transkrypt i stwórz szczegółową listę rozdziałów — celuj w około 1 rozdział co 3–5 minut.
-2. Rozdział może zacząć się WYŁĄCZNIE na linii, gdzie Prowadząca ({host_id}) ma ">>" na początku tekstu — to znaczy że właśnie zaczęła mówić.
-3. Użyj DOKŁADNEGO znacznika czasu z tej linii z ">>" jako timestampu rozdziału.
-4. Uwzględniaj zarówno duże zmiany tematyczne, jak i wyraźne podtematy — bądź granularny.
-5. Pierwszy rozdział zawsze zaczyna się od 00:00:00.
-6. Nazwa rozdziału ma być krótka i zwięzła (maksymalnie 5–7 słów), ale dokładnie informująca o czym jest dany fragment. Pisz po polsku.
-7. Zwróć WYŁĄCZNIE listę rozdziałów w dokładnie tym formacie (jeden na linię):
-   - Przed pierwszą godziną: MM:SS Nazwa rozdziału  (np. 07:42 Tytuł)
-   - Od pierwszej godziny wzwyż: HH:MM:SS Nazwa rozdziału  (np. 01:07:42 Tytuł)
+YOUR TASK:
+1. Analyze the transcript and produce a detailed chapter list — aim for roughly 1 chapter every 3–5 minutes.
+2. A chapter may ONLY start on a line where the Host ({host_id}) has ">>" at the start of their text — meaning they have just begun speaking.
+3. Use the EXACT timestamp from that ">>" line as the chapter timestamp.
+4. Cover both major topic shifts and clear sub-topics — be granular.
+5. The first chapter always starts at 00:00 (or 00:00:00 if the episode is over 1 hour).
+6. Write chapter titles in THE SAME LANGUAGE as the transcript. Keep titles short and concise (5–7 words max) but descriptive enough to tell the listener what the segment is about.
+7. Return ONLY the chapter list in exactly this format (one per line):
+   - Under 1 hour:  MM:SS Chapter Title  (e.g. 07:42 Title)
+   - 1 hour or more: HH:MM:SS Chapter Title  (e.g. 01:07:42 Title)
 
-Nie dodawaj żadnych wyjaśnień, wstępu ani dodatkowego tekstu. Tylko lista rozdziałów.
+Do NOT add any explanation, preamble, or extra text. Output the chapter list only.
 
-TRANSKRYPT:
+TRANSCRIPT:
 {timeline_text}
 """
 
