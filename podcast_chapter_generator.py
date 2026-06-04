@@ -32,6 +32,30 @@ GEMINI_MODEL = "gemini-3-flash-preview"
 INPUT_DIR = Path("input")
 OUTPUT_DIR = Path("output")
 
+# Podcast transcripts can legitimately contain frank language, political content,
+# medical/legal discussion, etc. Block only the highest-risk content so honest
+# discussion isn't filtered out of chapter generation.
+GEMINI_SAFETY_SETTINGS = {
+    "HARM_CATEGORY_HARASSMENT": "BLOCK_ONLY_HIGH",
+    "HARM_CATEGORY_HATE_SPEECH": "BLOCK_ONLY_HIGH",
+    "HARM_CATEGORY_SEXUALLY_EXPLICIT": "BLOCK_ONLY_HIGH",
+    "HARM_CATEGORY_DANGEROUS_CONTENT": "BLOCK_ONLY_HIGH",
+}
+
+HOST_DETECTION_SYSTEM_INSTRUCTION = (
+    "You analyze the opening of a podcast transcript and identify which speaker is "
+    "the host (prowadzący) based on greeting, show branding, episode preview, and "
+    "guest introduction patterns. Respond with only a speaker ID like SPEAKER_00 — "
+    "no explanation, no punctuation, no quotes."
+)
+
+CHAPTER_GEN_SYSTEM_INSTRUCTION = (
+    "You are an expert podcast editor. You produce YouTube chapter lists from "
+    "speaker-diarized transcripts. You output only the chapter list in the exact "
+    "format requested — no preamble, no explanation, no extra text. Chapter titles "
+    "must match the language of the transcript."
+)
+
 
 # ---------------------------------------------------------------------------
 # Utility helpers
@@ -141,7 +165,16 @@ def run_diarization(wav_path: Path, hf_token: str) -> list[dict]:
         device_label = "CPU (no GPU available — this will be slow)"
     print(f"[*] Using device: {device_label}")
 
+    # torch 2.6+ defaults weights_only=True which breaks pyannote checkpoint loading
+    _orig_load = torch.load
+    def _patched_load(*args, **kwargs):
+        kwargs["weights_only"] = False
+        return _orig_load(*args, **kwargs)
+    torch.load = _patched_load
+
     pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1")
+
+    torch.load = _orig_load  # restore original
     pipeline = pipeline.to(device)
 
     print("[*] Running diarization — this may take a few minutes ...")
@@ -199,6 +232,113 @@ def identify_host(segments: list[dict], manual_override: str | None = None) -> s
     for spk in ranked:
         print(f"    {spk}: {count[spk]} segments, first at {seconds_to_chapter_ts(first_seen[spk])}")
     return host
+
+
+def identify_host_with_gemini(timeline: list[dict], api_key: str, num_lines: int = 50) -> str | None:
+    """
+    Use Gemini to identify the host by analyzing the opening of the podcast.
+    Returns the speaker ID (e.g. "SPEAKER_01") or None on failure.
+
+    Host signals to look for (typical Polish podcast intros):
+      - "Dzień dobry / witam / witamy" greeting
+      - Show name announcement ("nazwa podcastu")
+      - Episode preview/summary before the actual conversation begins
+      - Welcoming and introducing the guest ("przedstawia gościa, kim on jest")
+      - Asking the first question
+    """
+    print(f"[*] Asking Gemini to identify the host from the first {num_lines} lines ...")
+    import google.generativeai as genai
+
+    opening_lines = []
+    for entry in timeline[:num_lines]:
+        ts = seconds_to_timestamp(entry["start"])
+        spk = entry["speaker"]
+        text = entry["text"]
+        opening_lines.append(f'{ts} [{spk}]: "{text}"')
+    opening_text = "\n".join(opening_lines)
+
+    available_speakers = sorted({e["speaker"] for e in timeline[:num_lines] if e["speaker"] != "UNKNOWN"})
+
+    prompt = f"""You are analyzing the opening of a Polish podcast to identify which speaker is THE HOST (prowadzący).
+
+The HOST is the person who:
+- Greets the audience ("Dzień dobry", "Witam", "Witamy", "Cześć")
+- Announces the podcast name and welcomes the listener ("zapraszamy", nazwa podcastu)
+- Gives a short preview/summary of the episode BEFORE the actual conversation starts ("zapowiedź odcinka")
+- Introduces the guest — says who they are, their title, expertise ("przedstawia gościa, kim on jest, czym się zajmuje")
+- Asks the first question to begin the actual interview
+- Generally drives the conversation
+
+The GUEST (gość) is the expert being interviewed — they answer questions, share expertise, but do NOT do the welcoming/intro/show-branding work.
+
+Available speaker IDs in this opening: {", ".join(available_speakers)}
+
+OPENING OF THE PODCAST:
+{opening_text}
+
+YOUR TASK:
+Identify the HOST. Respond with ONLY the speaker ID, nothing else. No explanation, no punctuation, no quotes.
+
+Example valid responses:
+SPEAKER_00
+SPEAKER_01
+
+Your answer:"""
+
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(
+            GEMINI_MODEL,
+            system_instruction=HOST_DETECTION_SYSTEM_INSTRUCTION,
+            safety_settings=GEMINI_SAFETY_SETTINGS,
+        )
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.GenerationConfig(
+                temperature=0.1,
+                # gemini-3-flash-preview is a thinking model — it spends output tokens on
+                # internal reasoning before producing the visible answer, so we need lots of
+                # headroom even though the final answer is just "SPEAKER_XX".
+                max_output_tokens=8192,
+            ),
+            safety_settings=GEMINI_SAFETY_SETTINGS,
+        )
+
+        # Pull text out robustly — response.text raises if finish_reason != STOP or no parts.
+        raw = ""
+        try:
+            raw = (response.text or "").strip()
+        except Exception:
+            for cand in getattr(response, "candidates", []) or []:
+                content = getattr(cand, "content", None)
+                for part in getattr(content, "parts", []) or []:
+                    txt = getattr(part, "text", "") or ""
+                    if txt:
+                        raw += txt
+            raw = raw.strip()
+
+        if not raw:
+            finish = None
+            try:
+                finish = response.candidates[0].finish_reason
+            except Exception:
+                pass
+            print(f"[!] Gemini host detection returned no text (finish_reason={finish}).")
+            return None
+
+        m = re.search(r"SPEAKER_\d+", raw)
+        if not m:
+            print(f"[!] Gemini host detection returned unparseable response: {raw!r}")
+            return None
+        host = m.group(0)
+        if host not in available_speakers:
+            print(f"[!] Gemini returned {host}, but it's not in the opening speakers ({available_speakers}). Ignoring.")
+            return None
+        print(f"[+] Gemini identified host: {host}")
+        return host
+    except Exception as e:
+        print(f"[!] Gemini host detection failed: {e}")
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +468,11 @@ def generate_chapters_with_gemini(
     import google.generativeai as genai
 
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(GEMINI_MODEL)
+    model = genai.GenerativeModel(
+        GEMINI_MODEL,
+        system_instruction=CHAPTER_GEN_SYSTEM_INSTRUCTION,
+        safety_settings=GEMINI_SAFETY_SETTINGS,
+    )
 
     prompt = f"""You are an expert podcast editor. Below is a full podcast transcript with speaker labels and precise timestamps.
 
@@ -363,6 +507,7 @@ TRANSCRIPT:
             temperature=0.9,
             max_output_tokens=65536,
         ),
+        safety_settings=GEMINI_SAFETY_SETTINGS,
     )
     return response.text.strip()
 
@@ -538,14 +683,23 @@ Examples:
         print(f"[+] Diarization saved to {diar_out}")
         print(f"    Re-run faster with: --skip-diarization \"{diar_out}\"")
 
-    # --- Step 3: Identify host ---
-    host_id = identify_host(segments, manual_override=args.host)
-
-    # --- Step 4: Parse subtitles ---
+    # --- Step 3: Parse subtitles ---
     subtitles = parse_subtitles(sub_path)
 
-    # --- Step 5: Build master timeline ---
+    # --- Step 4: Build master timeline (cleaned, subtitle-aligned diarization) ---
     timeline = build_master_timeline(subtitles, segments)
+
+    # --- Step 5: Identify host ---
+    # Manual override always wins. Otherwise try Gemini on the first 50 timeline lines
+    # (more accurate than segment counts), then fall back to count-based heuristic.
+    if args.host:
+        host_id = args.host
+        print(f"[*] Manual host override: {host_id}")
+    else:
+        host_id = identify_host_with_gemini(timeline, GEMINI_API_KEY, num_lines=50)
+        if host_id is None:
+            print("[*] Falling back to segment-count heuristic for host detection ...")
+            host_id = identify_host(segments)
 
     # --- Step 6: Format for Gemini ---
     timeline_text = format_timeline_for_gemini(timeline)

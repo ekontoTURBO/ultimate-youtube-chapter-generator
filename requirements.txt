@@ -1,15 +1,20 @@
 # Core audio diarization
 pyannote.audio==3.3.2
-torch>=2.0.0
-torchaudio>=2.0.0
+torch==2.6.0
+torchaudio==2.6.0
 
-# Pin huggingface_hub below 1.0 — pyannote internally uses use_auth_token
-# which was removed in huggingface_hub v1.0
-huggingface_hub>=0.23.0,<1.0.0
+# Pinned to a known-compatible set:
+# Pinned to a known-compatible set:
+# - pyannote internally uses use_auth_token (removed in huggingface_hub>=0.23.0)
+huggingface_hub<0.23.0
+transformers==4.38.2
 
 # Audio file handling
 pydub==0.25.1
 ffmpeg-python==0.2.0
+# pydub depends on stdlib `audioop`, which was removed in Python 3.13 (PEP 594).
+# audioop-lts is the official drop-in replacement.
+audioop-lts==0.2.1; python_version >= "3.13"
 
 # Subtitle parsing
 srt==3.5.3

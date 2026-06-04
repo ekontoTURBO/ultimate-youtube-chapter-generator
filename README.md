@@ -219,6 +219,7 @@ As a tiebreaker, if two speakers have the same count, it picks whoever spoke fir
 - **Wrong host detected?** See "How Host Detection Works" above.
 - **YouTube auto-generated subtitles** downloaded as `.srt` work perfectly as input.
 - The GPU is only used during diarization. Once that's done and saved, all re-runs (changing the host, tweaking results) are CPU-only and complete in seconds regardless of your hardware.
+- **Script crashes natively on HuggingFace `use_auth_token` or `AudioDecoder` missing?** This project relies on a specific "golden triangle" of locked requirements (`pyannote.audio==3.3.2`, `huggingface_hub<0.23.0`, `transformers==4.38.2`) to safely bypass these known bugs in newer Pyannote releases. Do not manually upgrade these 3 specific libraries.
 
 ---
 
