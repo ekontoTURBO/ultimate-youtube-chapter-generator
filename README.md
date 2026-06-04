@@ -1,5 +1,12 @@
 # Podcast Chapter Generator
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Gemini](https://img.shields.io/badge/Gemini-API-4285F4.svg)](https://aistudio.google.com)
+[![pyannote.audio](https://img.shields.io/badge/pyannote-3.1-orange.svg)](https://github.com/pyannote/pyannote-audio)
+[![GPU: CUDA / MPS / ROCm](https://img.shields.io/badge/GPU-CUDA%20%7C%20MPS%20%7C%20ROCm-76b900.svg)]()
+[![Cognitra](https://img.shields.io/badge/by-Cognitra-aa8600.svg)](https://www.cognitra.pl/)
+
 An open source tool developed by [Cognitra](https://www.cognitra.pl/).
 
 Automatically generates YouTube-style chapters from a podcast episode — no manual timestamping needed.
